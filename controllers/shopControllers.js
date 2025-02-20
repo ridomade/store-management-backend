@@ -63,95 +63,98 @@ const getShopDataById = async (req, res) => {
 };
 
 const createShop = async (req, res) => {
-    const { shop_name } = req.body;
-    const id = req.user.id;
+    const { shop_name, account_id: providedAccountId } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
+    let account_id; // Variabel untuk menentukan siapa pemilik toko
 
     try {
-        if (req.user.role !== "owner" && req.user.role !== "admin") {
-            return res
-                .status(403)
-                .json({ message: "Unauthorized: Only owners or admin can create shops" });
+        // Hanya owner dan admin yang boleh membuat toko
+        if (userRole !== "owner" && userRole !== "admin") {
+            return res.status(403).json({
+                message: "Unauthorized: Only owners or admins can create shops",
+            });
         }
 
+        // Jika user adalah admin, gunakan account_id dari request, jika tidak, gunakan ID user yang login
+        if (userRole === "admin") {
+            if (!providedAccountId) {
+                return res.status(400).json({
+                    message: "account_id is required for admin users",
+                });
+            }
+            account_id = providedAccountId;
+        } else {
+            account_id = userId; // Owner otomatis menjadi pemilik toko
+        }
+
+        // Masukkan data toko ke database
         const [newShop] = await pool.query(
             "INSERT INTO shop (shop_name, account_id) VALUES (?, ?)",
-            [shop_name, id]
+            [shop_name, account_id]
         );
+
         res.status(201).json({
             id: newShop.insertId,
             name: shop_name,
-            account_id: id,
+            account_id: account_id,
         });
     } catch (error) {
         console.error("Error creating shop:", error);
         res.status(500).json({ error: "Failed to create shop" });
     }
 };
-
-/**
- * @desc    Update shop data (Accessible to authenticated users)
- * @route   GET /api/shop/update/:id
- * @access  Private (Authenticated users)
- */
-
 const updateShopData = async (req, res) => {
     const { id } = req.params;
-    const { email, password, name, phone } = req.body;
+    const { shop_name } = req.body;
+    const userId = req.user.id;
+    const userRole = req.user.role;
 
     try {
-        if (req.user.id !== Number(id) && req.user.role !== "admin") {
+        // Hanya owner dan admin yang boleh mengupdate toko
+        if (userRole !== "owner" && userRole !== "admin") {
             return res.status(403).json({
-                message: "Unauthorized: Only admins or the shop itself can update shop data",
+                message: "Unauthorized: Only owners or admins can update shops",
             });
         }
 
-        const [[existingUser]] = await pool.query("SELECT * FROM shop WHERE id = ?", [id]);
+        // Cek apakah toko yang akan diupdate ada di database
+        const [[shop]] = await pool.query("SELECT * FROM shop WHERE id = ?", [id]);
 
-        if (!existingUser) {
+        if (!shop) {
             return res.status(404).json({ message: "Shop not found" });
         }
 
-        const updates = {};
-        if (email) {
-            const [[emailExists]] = await pool.query(
-                "SELECT id FROM shop WHERE email = ? AND id != ?",
-                [email, id]
-            );
-            if (emailExists) {
-                return res.status(400).json({ message: "Email is already in use by another shop" });
-            }
-            updates.email = email;
-        }
-        if (password) {
-            updates.password = await bcrypt.hash(password, 10);
-        }
-        if (name) updates.name = name;
-        if (phone) updates.phone = phone;
-
-        if (Object.keys(updates).length === 0) {
-            return res.status(400).json({ message: "No data provided for update" });
+        // Owner hanya bisa mengupdate toko miliknya sendiri
+        if (shop.account_id !== userId && userRole !== "admin") {
+            return res.status(403).json({
+                message: "Unauthorized: You can only update your own shop",
+            });
         }
 
-        const fields = Object.keys(updates)
-            .map((field) => `${field} = ?`)
-            .join(", ");
-        const values = Object.values(updates);
+        // Menyiapkan data yang akan diupdate (hanya update field yang diberikan)
+        const updates = [];
+        const values = [];
+
+        if (shop_name) {
+            updates.push("shop_name = ?");
+            values.push(shop_name);
+        }
+
+        // Jika tidak ada data yang diberikan untuk update, kirim pesan error
+        if (updates.length === 0) {
+            return res.status(400).json({ message: "No data provided to update" });
+        }
+
+        // Menjalankan query update hanya untuk field yang diberikan
         values.push(id);
+        const query = `UPDATE shop SET ${updates.join(", ")} WHERE id = ?`;
 
-        await pool.query(`UPDATE shop SET ${fields} WHERE id = ?`, values);
+        await pool.query(query, values);
 
-        const response = {
-            message: "Shop data successfully updated",
-            id,
-            email: updates.email || existingUser.email,
-            name: updates.name || existingUser.name,
-            phone: updates.phone || existingUser.phone,
-            role: existingUser.role,
-        };
-
-        res.status(200).json(response);
+        res.status(200).json({ message: "Shop data updated successfully" });
     } catch (error) {
-        console.error("Error updating shop:", error);
+        console.error("Error updating shop data:", error);
         res.status(500).json({ error: "Failed to update shop data" });
     }
 };

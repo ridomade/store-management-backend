@@ -103,4 +103,55 @@ const loginAccount = async (req, res) => {
     }
 };
 
-module.exports = { registerNewAccount, loginAccount };
+const updateAccountData = async (req, res) => {
+    const { id } = req.params;
+    const { email, password, name, phone } = req.body;
+
+    try {
+        if (req.user.id !== Number(id) && req.user.role !== "admin") {
+            return res.status(403).json({
+                message: "Unauthorized: Only admins or the account itself can update account data",
+            });
+        }
+
+        const [[existingUser]] = await pool.query("SELECT * FROM account WHERE id = ?", [id]);
+
+        if (!existingUser) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
+        const updates = {};
+        if (email) {
+            const [[emailExists]] = await pool.query(
+                "SELECT id FROM account WHERE email = ? AND id != ?",
+                [email, id]
+            );
+            if (emailExists) {
+                return res
+                    .status(400)
+                    .json({ message: "Email is already in use by another account" });
+            }
+            updates.email = email;
+        }
+        if (password) {
+            updates.password = await bcrypt.hash(password, 10);
+        }
+        if (name) updates.name = name;
+        if (phone) updates.phone = phone;
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ message: "No changes submitted" });
+        }
+
+        await pool.query("UPDATE account SET ? WHERE id = ?", [updates, id]);
+
+        res.json({ message: "Account data updated successfully" });
+    } catch (error) {
+        console.error("Error updating account data:", error);
+        res.status(500).json({ error: "Failed to update account data" });
+    }
+};
+const validateToken = async (req, res) => {
+    res.json(req.user);
+};
+module.exports = { registerNewAccount, loginAccount, validateToken, updateAccountData };
