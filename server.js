@@ -30,7 +30,7 @@ const initializeDatabase = async () => {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password VARCHAR(255) NOT NULL,
-                created_by VARCHAR(255) NOT NULL,
+                created_by INT NOT NULL,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -39,8 +39,8 @@ const initializeDatabase = async () => {
             CREATE TABLE IF NOT EXISTS shop (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 shop_name VARCHAR(255) NOT NULL,
-                account_id INT NOT NULL,
-                CONSTRAINT fk_shop_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
+                created_by INT NOT NULL,
+                CONSTRAINT fk_shop_account_id FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE RESTRICT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -52,6 +52,17 @@ const initializeDatabase = async () => {
                 phone VARCHAR(255) NOT NULL,
                 account_id INT NOT NULL,
                 CONSTRAINT fk_owner_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                phone VARCHAR(255) NOT NULL,
+                account_id INT NOT NULL,
+                CONSTRAINT fk_admin_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -111,11 +122,105 @@ const initializeDatabase = async () => {
         process.exit(1); // Stop execution if database setup fails
     }
 };
+
+const createIndexes = async () => {
+    try {
+        console.log("🔄 Checking and Creating Indexes...");
+
+        const checkAndCreateIndex = async (indexName, tableName, createIndexQuery) => {
+            const [rows] = await pool.query(`SHOW INDEX FROM ${tableName} WHERE Key_name = ?`, [
+                indexName,
+            ]);
+            if (rows.length === 0) {
+                await pool.query(createIndexQuery);
+                console.log(`✅ Index ${indexName} created on table ${tableName}`);
+            }
+        };
+
+        // Index untuk pencarian cepat
+        await checkAndCreateIndex(
+            "idx_account_email",
+            "account",
+            `CREATE INDEX idx_account_email ON account(email);`
+        );
+        await checkAndCreateIndex(
+            "idx_owner_phone",
+            "owner",
+            `CREATE INDEX idx_owner_phone ON owner(phone);`
+        );
+        await checkAndCreateIndex(
+            "idx_employee_phone",
+            "employee",
+            `CREATE INDEX idx_employee_phone ON employee(phone);`
+        );
+        await checkAndCreateIndex(
+            "idx_transaction_customer_phone",
+            "transaction",
+            `CREATE INDEX idx_transaction_customer_phone ON transaction(customer_phone);`
+        );
+
+        // Index untuk foreign key agar JOIN lebih cepat
+        await checkAndCreateIndex(
+            "idx_shop_account_id",
+            "shop",
+            `CREATE INDEX idx_shop_account_id ON shop(created_by);`
+        );
+        await checkAndCreateIndex(
+            "idx_owner_account_id",
+            "owner",
+            `CREATE INDEX idx_owner_account_id ON owner(account_id);`
+        );
+        await checkAndCreateIndex(
+            "idx_employee_shop_id",
+            "employee",
+            `CREATE INDEX idx_employee_shop_id ON employee(shop_id);`
+        );
+        await checkAndCreateIndex(
+            "idx_employee_owner_id",
+            "employee",
+            `CREATE INDEX idx_employee_owner_id ON employee(owner_id);`
+        );
+        await checkAndCreateIndex(
+            "idx_product_shop",
+            "product",
+            `CREATE INDEX idx_product_shop ON product(shop_id);`
+        );
+        await checkAndCreateIndex(
+            "idx_transaction_shop",
+            "transaction",
+            `CREATE INDEX idx_transaction_shop ON transaction(shop_id);`
+        );
+        await checkAndCreateIndex(
+            "idx_transaction_product",
+            "transaction",
+            `CREATE INDEX idx_transaction_product ON transaction(product_id);`
+        );
+
+        // Composite index untuk query kombinasi
+        await checkAndCreateIndex(
+            "idx_account_email_created",
+            "account",
+            `CREATE INDEX idx_account_email_created ON account(email, created_at);`
+        );
+        await checkAndCreateIndex(
+            "idx_product_name_shop",
+            "product",
+            `CREATE INDEX idx_product_name_shop ON product(product_name, shop_id);`
+        );
+
+        console.log("✅ Indexing process completed!");
+    } catch (error) {
+        console.error("❌ Error creating indexes:", error);
+    }
+};
+
 // Start the server only if not in test mode
 if (process.env.NODE_ENV !== "test") {
     initializeDatabase().then(() => {
-        app.listen(port, () => {
-            console.log(`🚀 Server running on port ${port}`);
+        createIndexes().then(() => {
+            app.listen(port, () => {
+                console.log(`🚀 Server running on port ${port}`);
+            });
         });
     });
 }

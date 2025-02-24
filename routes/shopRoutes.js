@@ -1,6 +1,5 @@
 const express = require("express");
 const tokenHandler = require("../middleware/tokenHandler");
-const registerHandler = require("../middleware/registerHandler");
 const requestLimiter = require("../middleware/requestLimiter");
 const router = express.Router();
 

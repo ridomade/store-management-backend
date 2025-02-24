@@ -63,41 +63,44 @@ const getShopDataById = async (req, res) => {
 };
 
 const createShop = async (req, res) => {
-    const { shop_name, account_id: providedAccountId } = req.body;
-    const userId = req.user.id;
-    const userRole = req.user.role;
-    let account_id; // Variabel untuk menentukan siapa pemilik toko
+    const { shop_name } = req.body;
+    const accountId = req.user.id;
 
     try {
-        // Hanya owner dan admin yang boleh membuat toko
-        if (userRole !== "owner" && userRole !== "admin") {
-            return res.status(403).json({
-                message: "Unauthorized: Only owners or admins can create shops",
-            });
+        if (!shop_name) {
+            return res.status(400).json({ message: "shop_name is required" });
         }
 
-        // Jika user adalah admin, gunakan account_id dari request, jika tidak, gunakan ID user yang login
-        if (userRole === "admin") {
-            if (!providedAccountId) {
-                return res.status(400).json({
-                    message: "account_id is required for admin users",
-                });
-            }
-            account_id = providedAccountId;
-        } else {
-            account_id = userId; // Owner otomatis menjadi pemilik toko
-        }
-
-        // Masukkan data toko ke database
-        const [newShop] = await pool.query(
-            "INSERT INTO shop (shop_name, account_id) VALUES (?, ?)",
-            [shop_name, account_id]
+        const [rows] = await pool.query(
+            `SELECT 
+                CASE 
+                    WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
+                    WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
+                    WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
+                    ELSE NULL
+                END AS role;`,
+            [accountId, accountId, accountId]
         );
 
+        if (!rows[0].role) {
+            return res.status(403).json({ message: "Account not Found" });
+        }
+
+        if (rows[0].role === "employee") {
+            return res
+                .status(403)
+                .json({ message: "Unauthorized: Only owners or admins can create shops" });
+        }
+        const created_by = accountId;
+        const [shop] = await pool.query("INSERT INTO shop (shop_name, created_by) VALUES (?, ?)", [
+            shop_name,
+            created_by,
+        ]);
+
         res.status(201).json({
-            id: newShop.insertId,
-            name: shop_name,
-            account_id: account_id,
+            message: "Shop created successfully",
+            shop_name: shop_name,
+            shop_id: shop.insertId,
         });
     } catch (error) {
         console.error("Error creating shop:", error);

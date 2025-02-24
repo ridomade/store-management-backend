@@ -3,28 +3,41 @@ require("dotenv").config();
 
 const tokenHandler = (req, res, next) => {
     try {
-        const authHeader = req.headers.authorization || req.headers.Authorization; // Header standar token
+        const authHeaderAdmin = req.header("adminAuth"); // Header khusus admin
+        const authHeader = req.headers.authorization || req.headers.Authorization;
 
-        // **Cek jika authorization token tersedia**
-        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        // Jika tidak ada token sama sekali, tolak akses
+        if (!authHeader && !authHeaderAdmin) {
             return res.status(401).json({ message: "Not authorized, no token provided" });
         }
 
-        // **Extract token**
-        const token = authHeader.split(" ")[1];
-
-        // **Verifikasi token**
-        const decoded = jwt.verify(token, process.env.PRIVATE_KEY);
-        if (!decoded) {
-            return res.status(401).json({ message: "Unauthorized: Invalid token data" });
+        // Jika ada admin token, validasi dulu
+        if (authHeaderAdmin) {
+            if (authHeaderAdmin !== process.env.ADMIN_KEY) {
+                return res.status(401).json({ message: "Not authorized, invalid admin token" });
+            }
+            req.user = { admin: true }; // Pastikan req.user ada
+            return next();
         }
 
-        req.user = decoded; // Simpan data user di req
+        // Jika ada token user, validasi JWT
+        if (authHeader && authHeader.startsWith("Bearer ")) {
+            try {
+                const token = authHeader.split(" ")[1]; // Ambil token setelah "Bearer"
+                const decoded = jwt.verify(token, process.env.PRIVATE_KEY);
+                req.user = decoded; // Set user berdasarkan token
+                req.user.admin = false; // Pastikan admin=false jika bukan admin
+                return next();
+            } catch (error) {
+                return res.status(403).json({ message: "Invalid or expired token" });
+            }
+        }
 
-        next();
+        // Jika tidak memenuhi kondisi di atas, tolak akses
+        return res.status(401).json({ message: "Not authorized" });
     } catch (error) {
-        console.error("Token verification failed:", error);
-        return res.status(401).json({ message: "Not authorized, invalid token" });
+        console.error("Authorization error:", error);
+        return res.status(500).json({ message: "Internal server error" });
     }
 };
 

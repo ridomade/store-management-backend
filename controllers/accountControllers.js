@@ -4,55 +4,72 @@ const jwt = require("jsonwebtoken");
 
 const registerNewAccount = async (req, res) => {
     const { email, password, name, phone } = req.body;
-    let role = req.body.role ? req.body.role.trim().toLowerCase() : "employee"; // Default ke 'employee' jika kosong
-
+    let role = req.body.role ? req.body.role.trim().toLowerCase() : "employee"; // Default ke 'employee'
+    let created_by = 0; // 0 Means admin
     try {
-        // Validasi input: Pastikan semua field yang diperlukan diisi
         if (!email || !password || !name || !phone) {
-            return res.status(400).json({
-                message: "All fields are required: email, password, name, phone",
-            });
+            return res
+                .status(400)
+                .json({ message: "All fields are required: email, password, name, phone" });
         }
 
-        // Role yang diperbolehkan
         const validRoles = ["owner", "employee", "admin"];
 
-        // Jika req.admin = false, role HARUS menjadi employee
         if (!req.user.admin) {
-            role = "employee"; // Paksa role menjadi 'employee'
+            created_by = req.user.id;
+            role = "employee"; // Paksa menjadi 'employee' jika bukan admin
         }
 
-        // Validasi role: Hanya boleh 'owner', 'employee', atau 'admin'
         if (!validRoles.includes(role)) {
             return res.status(400).json({ message: "Invalid role" });
         }
 
-        // Cek apakah email sudah terdaftar
+        // Cek apakah email sudah ada
         const [[existingUser]] = await pool.query("SELECT id FROM account WHERE email = ?", [
             email,
         ]);
-
         if (existingUser) {
             return res.status(400).json({ message: "Email is already registered" });
         }
 
-        // Hash password sebelum menyimpannya ke database
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Mulai transaksi
+        const connection = await pool.getConnection();
+        await connection.beginTransaction();
 
-        // Insert user ke database
-        const [result] = await pool.query(
-            "INSERT INTO account (email, password, name, phone, role) VALUES (?, ?, ?, ?, ?)",
-            [email, hashedPassword, name, phone, role]
-        );
+        try {
+            // Hash password dan insert ke akun
+            const hashedPassword = await bcrypt.hash(password, 10);
+            const [accountResult] = await connection.query(
+                "INSERT INTO account (email, password,created_by) VALUES (?, ?,?)",
+                [email, hashedPassword, created_by]
+            );
 
-        res.status(201).json({
-            message: "Employee successfully registered",
-            employeeId: result.insertId,
-            email,
-            name,
-            phone,
-            role,
-        });
+            // Dapatkan ID akun yang baru saja dibuat
+            const accountId = accountResult.insertId;
+            const tableInsert = role;
+            // Insert data ke tabel owner/employee
+            await connection.query(
+                `INSERT INTO ${tableInsert} (name, phone, account_id) VALUES (?, ?, ?)`,
+                [name, phone, accountId]
+            );
+
+            // Commit transaksi
+            await connection.commit();
+            connection.release();
+
+            res.status(201).json({
+                message: "Employee successfully registered",
+                email,
+                name,
+                phone,
+                role,
+            });
+        } catch (err) {
+            // Rollback jika ada error dalam transaksi
+            await connection.rollback();
+            connection.release();
+            throw err;
+        }
     } catch (error) {
         console.error("Error registering employee:", error);
         res.status(500).json({ error: "Failed to register employee" });
