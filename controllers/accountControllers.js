@@ -122,50 +122,54 @@ const loginAccount = async (req, res) => {
 
 const updateAccountData = async (req, res) => {
     const { id } = req.params;
-    const { email, password, name, phone } = req.body;
-
+    const { name, phone } = req.body;
+    const role = req.user.role;
+    const userId = req.user.id;
     try {
-        if (req.user.id !== Number(id) && req.user.role !== "admin") {
-            return res.status(403).json({
-                message: "Unauthorized: Only admins or the account itself can update account data",
-            });
-        }
+        let query;
+        let params;
 
-        const [[existingUser]] = await pool.query("SELECT * FROM account WHERE id = ?", [id]);
-
-        if (!existingUser) {
-            return res.status(404).json({ message: "Account not found" });
-        }
-
-        const updates = {};
-        if (email) {
-            const [[emailExists]] = await pool.query(
-                "SELECT id FROM account WHERE email = ? AND id != ?",
-                [email, id]
+        // admin bisa update semua
+        if (role === "admin") {
+            const [rows] = await pool.query(
+                `SELECT 
+                    CASE 
+                        WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
+                        WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
+                        WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
+                        ELSE NULL
+                    END AS tableUpdate;`,
+                [id, id, id]
             );
-            if (emailExists) {
-                return res
-                    .status(400)
-                    .json({ message: "Email is already in use by another account" });
+
+            if (!rows[0].tableUpdate) {
+                return res.status(404).json({ message: "Account not found" });
             }
-            updates.email = email;
-        }
-        if (password) {
-            updates.password = await bcrypt.hash(password, 10);
-        }
-        if (name) updates.name = name;
-        if (phone) updates.phone = phone;
 
-        if (Object.keys(updates).length === 0) {
-            return res.status(400).json({ message: "No changes submitted" });
+            const tableUpdate = rows[0].role;
+            query = `UPDATE ${tableUpdate} SET name = ?, phone = ? WHERE account_id = ?`;
+            params = [name, phone, id];
+
+            // owner hanya bisa update miliknya sendiri
+        } else if (role === "owner") {
+            query = "UPDATE owner SET name = ?, phone = ? WHERE account_id = ? AND account_id = ?";
+            params = [name, phone, id, userId];
+        } else {
+            query =
+                "UPDATE employee SET name = ?, phone = ? WHERE account_id = ? AND account_id = ?";
+            params = [name, phone, id, userId];
         }
 
-        await pool.query("UPDATE account SET ? WHERE id = ?", [updates, id]);
+        const [result] = await pool.query(query, params);
 
-        res.json({ message: "Account data updated successfully" });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: "Account not found or access denied" });
+        }
+
+        res.status(200).json({ message: "Account updated successfully" });
     } catch (error) {
-        console.error("Error updating account data:", error);
-        res.status(500).json({ error: "Failed to update account data" });
+        console.error("Error updating account:", error);
+        res.status(500).json({ error: "Failed to update account" });
     }
 };
 const validateToken = async (req, res) => {

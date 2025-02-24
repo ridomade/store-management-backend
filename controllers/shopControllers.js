@@ -26,7 +26,7 @@ const getAllOwnerShops = async (req, res) => {
 };
 const getShopDataById = async (req, res) => {
     const { id } = req.params;
-    const { role, id: userId } = req.user; // Ambil role dan user ID dari token
+    const { role, id: userId } = req.user;
 
     try {
         // tolak jika employee
@@ -65,7 +65,7 @@ const getShopDataById = async (req, res) => {
 const createShop = async (req, res) => {
     const { shop_name } = req.body;
     const accountId = req.user.id;
-
+    let owner_id;
     try {
         if (!shop_name) {
             return res.status(400).json({ message: "shop_name is required" });
@@ -85,22 +85,36 @@ const createShop = async (req, res) => {
         if (!rows[0].role) {
             return res.status(403).json({ message: "Account not Found" });
         }
-
+        if (rows[0].role === "owner") {
+            owner_id = accountId; // kalo bukan admin, owner_id diisi dengan account id
+        } else if (rows[0].role === "admin") {
+            if (!req.body.owner_id) {
+                return res.status(400).json({ message: "owner_id is required" });
+            }
+            const [owner] = await pool.query("SELECT account_id FROM owner WHERE account_id = ?", [
+                req.body.owner_id,
+            ]);
+            if (owner.length === 0) {
+                return res.status(404).json({ message: "owner_id not found" });
+            }
+            owner_id = req.body.owner_id;
+        }
         if (rows[0].role === "employee") {
             return res
                 .status(403)
                 .json({ message: "Unauthorized: Only owners or admins can create shops" });
         }
         const created_by = accountId;
-        const [shop] = await pool.query("INSERT INTO shop (shop_name, created_by) VALUES (?, ?)", [
-            shop_name,
-            created_by,
-        ]);
+        const [shop] = await pool.query(
+            "INSERT INTO shop (shop_name, created_by, owner_id) VALUES (?, ?, ?)",
+            [shop_name, created_by, owner_id]
+        );
 
         res.status(201).json({
             message: "Shop created successfully",
             shop_name: shop_name,
             shop_id: shop.insertId,
+            owner_id: owner_id,
         });
     } catch (error) {
         console.error("Error creating shop:", error);
@@ -128,7 +142,7 @@ const updateShopData = async (req, res) => {
             return res.status(404).json({ message: "Shop not found" });
         }
 
-        // Owner hanya bisa mengupdate toko miliknya sendiri
+        // Owner hanya bisa mengupdate toko miliknya sendiri, owner bisa update semua toko
         if (shop.account_id !== userId && userRole !== "admin") {
             return res.status(403).json({
                 message: "Unauthorized: You can only update your own shop",

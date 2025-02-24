@@ -36,22 +36,24 @@ const initializeDatabase = async () => {
             )
         `);
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS shop (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                shop_name VARCHAR(255) NOT NULL,
-                created_by INT NOT NULL,
-                CONSTRAINT fk_shop_account_id FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE RESTRICT,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        `);
-        await pool.query(`
             CREATE TABLE IF NOT EXISTS owner (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 name VARCHAR(255) NOT NULL,
                 phone VARCHAR(255) NOT NULL,
                 account_id INT NOT NULL,
-                CONSTRAINT fk_owner_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_owner_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE CASCADE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS shop (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                shop_name VARCHAR(255) NOT NULL,
+                created_by INT NOT NULL,
+                owner_id INT NOT NULL,
+                CONSTRAINT fk_shop_owner_id FOREIGN KEY (owner_id) REFERENCES owner(id) ON DELETE CASCADE,
+                CONSTRAINT fk_shop_account_id FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -62,7 +64,7 @@ const initializeDatabase = async () => {
                 name VARCHAR(255) NOT NULL,
                 phone VARCHAR(255) NOT NULL,
                 account_id INT NOT NULL,
-                CONSTRAINT fk_admin_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_admin_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -75,9 +77,9 @@ const initializeDatabase = async () => {
                 owner_id INT NOT NULL,
                 shop_id INT NOT NULL,
                 account_id INT NOT NULL,
-                CONSTRAINT fk_employee_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE RESTRICT,
-                CONSTRAINT fk_employee_shop_id FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE RESTRICT,
-                CONSTRAINT fk_employee_owner_id FOREIGN KEY (owner_id) REFERENCES owner(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_employee_account_id FOREIGN KEY (account_id) REFERENCES account(id) ON DELETE CASCADE,
+                CONSTRAINT fk_employee_shop_id FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE CASCADE,
+                CONSTRAINT fk_employee_owner_id FOREIGN KEY (owner_id) REFERENCES owner(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -89,9 +91,9 @@ const initializeDatabase = async () => {
                 product_quantity INT NOT NULL,
                 product_price INT NOT NULL,
                 shop_id INT NOT NULL,
-                CONSTRAINT fk_product_shop FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_product_shop FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE CASCADE,
                 created_by INT NOT NULL,
-                CONSTRAINT fk_product_created_by FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_product_created_by FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -107,11 +109,11 @@ const initializeDatabase = async () => {
                 total_price INT NOT NULL,
                 status ENUM('success', 'failed') NOT NULL,
                 shop_id INT NOT NULL,
-                CONSTRAINT fk_shop_transaction FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_shop_transaction FOREIGN KEY (shop_id) REFERENCES shop(id) ON DELETE CASCADE,
                 account_id INT NOT NULL,
-                CONSTRAINT fk_transaction_created_by FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_transaction_created_by FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE CASCADE,
                 product_id INT NOT NULL,
-                CONSTRAINT fk_product FOREIGN KEY (product_id) REFERENCES product(id) ON DELETE RESTRICT,
+                CONSTRAINT fk_product FOREIGN KEY (product_id) REFERENCES product(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
