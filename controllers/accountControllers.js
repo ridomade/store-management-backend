@@ -6,6 +6,7 @@ const registerNewAccount = async (req, res) => {
     const { email, password, name, phone } = req.body;
     let role = req.body.role ? req.body.role.trim().toLowerCase() : "employee"; // Default ke 'employee'
     let created_by = 0; // 0 Means admin
+    let owner_id;
     try {
         if (!email || !password || !name || !phone) {
             return res
@@ -47,11 +48,36 @@ const registerNewAccount = async (req, res) => {
             // Dapatkan ID akun yang baru saja dibuat
             const accountId = accountResult.insertId;
             const tableInsert = role;
-            // Insert data ke tabel owner/employee
-            await connection.query(
-                `INSERT INTO ${tableInsert} (name, phone, account_id) VALUES (?, ?, ?)`,
-                [name, phone, accountId]
-            );
+
+            if (tableInsert === "admin") {
+                await connection.query(
+                    `INSERT INTO admin (name, phone, account_id) VALUES (?, ?, ?)`,
+                    [name, phone, accountId]
+                );
+            } else {
+                if (!req.user.role === "admin" && !req.user.isAdmin) {
+                    await connection.query(
+                        `INSERT INTO ${tableInsert} (name, phone, account_id, owner_id) VALUES (?, ?,  ?, ?)`,
+                        [name, phone, accountId, req.user.id]
+                    );
+                } else {
+                    if (!req.body.owner_id) {
+                        return res.status(400).json({ message: "owner_id is required" });
+                    }
+                    const [owner] = await pool.query(
+                        "SELECT account_id FROM owner WHERE account_id = ?",
+                        [req.body.owner_id]
+                    );
+                    if (owner.length === 0) {
+                        return res.status(404).json({ message: "owner_id not found" });
+                    }
+                    owner_id = req.body.owner_id;
+                    await connection.query(
+                        `INSERT INTO ${tableInsert} (name, phone, account_id, owner_id) VALUES (?, ?,  ?, ?)`,
+                        [name, phone, accountId, owner_id]
+                    );
+                }
+            }
 
             // Commit transaksi
             await connection.commit();
