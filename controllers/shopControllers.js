@@ -86,7 +86,10 @@ const createShop = async (req, res) => {
             return res.status(403).json({ message: "Account not Found" });
         }
         if (rows[0].role === "owner") {
-            owner_id = accountId; // kalo bukan admin, owner_id diisi dengan account id
+            const [owner] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
+                accountId,
+            ]);
+            owner_id = owner[0].id; // kalo bukan admin, owner_id diisi dengan id owner yang login
         } else if (rows[0].role === "admin") {
             if (!req.body.owner_id) {
                 return res.status(400).json({ message: "owner_id is required" });

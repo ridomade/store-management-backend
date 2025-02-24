@@ -62,18 +62,21 @@ const registerNewAccount = async (req, res) => {
             }
 
             if (!req.body.shop_id) {
+                await connection.rollback();
                 connection.release();
                 return res.status(400).json({ message: "shop_id is required" });
             }
 
             shop_id = req.body.shop_id;
 
+            console.log("user role", req.user.role);
             if (req.user.role === "owner") {
                 const [shop] = await connection.query(
                     "SELECT * FROM shop WHERE id = ? AND owner_id = ?",
                     [shop_id, req.user.id]
                 );
                 if (shop.length === 0) {
+                    await connection.rollback();
                     connection.release();
                     return res.status(404).json({ message: "Shop not found" });
                 }
@@ -84,6 +87,7 @@ const registerNewAccount = async (req, res) => {
             } else if (req.user.role === "admin" || req.user.admin) {
                 const [shop] = await connection.query("SELECT * FROM shop WHERE id = ?", [shop_id]);
                 if (shop.length === 0) {
+                    await connection.rollback();
                     connection.release();
                     return res.status(404).json({ message: "Shop not found" });
                 }
@@ -105,9 +109,10 @@ const registerNewAccount = async (req, res) => {
                 shop_id,
             });
         } catch (err) {
-            await connection.rollback();
+            await connection.rollback(); // **Rollback sebelum release**
             connection.release();
-            throw err;
+            console.error("Error during transaction:", err);
+            res.status(500).json({ error: "Failed to register account" });
         }
     } catch (error) {
         console.error("Error registering employee:", error);
@@ -137,8 +142,25 @@ const loginAccount = async (req, res) => {
             return res.status(401).json({ message: "Invalid email or password" });
         }
 
+        const [rows] = await pool.query(
+            `SELECT
+                CASE
+                    WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
+                    WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
+                    WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
+                    ELSE NULL
+                END AS role;`,
+            [account.id, account.id, account.id]
+        );
+
+        if (!rows[0].role) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
+        role = rows[0].role;
+
         // Generate a JWT token
-        const token = jwt.sign({ id: account.id, role: account.role }, process.env.PRIVATE_KEY, {
+        const token = jwt.sign({ id: account.id, role: role }, process.env.PRIVATE_KEY, {
             expiresIn: "1h",
         });
 
@@ -185,7 +207,7 @@ const updateAccountData = async (req, res) => {
                 return res.status(404).json({ message: "Account not found" });
             }
 
-            const tableUpdate = rows[0].role;
+            const tableUpdate = rows[0].tableUpdate;
             query = `UPDATE ${tableUpdate} SET name = ?, phone = ? WHERE account_id = ?`;
             params = [name, phone, id];
 
