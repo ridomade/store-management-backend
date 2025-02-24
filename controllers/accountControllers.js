@@ -4,10 +4,16 @@ const jwt = require("jsonwebtoken");
 
 const registerNewAccount = async (req, res) => {
     const { email, password, name, phone } = req.body;
-    let role = req.body.role ? req.body.role.trim().toLowerCase() : "employee"; // Default ke 'employee'
-    let created_by = 0; // 0 Means admin
-    let owner_id;
+    let role = req.body.role ? req.body.role.trim().toLowerCase() : "employee";
+    let created_by = 0;
+    let owner_id, shop_id;
+
     try {
+        if (req.user.role === "employee") {
+            return res.status(403).json({
+                message: "Unauthorized: Only owners or admin can register new accounts",
+            });
+        }
         if (!email || !password || !name || !phone) {
             return res
                 .status(400)
@@ -15,17 +21,14 @@ const registerNewAccount = async (req, res) => {
         }
 
         const validRoles = ["owner", "employee", "admin"];
-
         if (!req.user.admin) {
             created_by = req.user.id;
-            role = "employee"; // Paksa menjadi 'employee' jika bukan admin
+            role = "employee";
         }
-
         if (!validRoles.includes(role)) {
             return res.status(400).json({ message: "Invalid role" });
         }
 
-        // Cek apakah email sudah ada
         const [[existingUser]] = await pool.query("SELECT id FROM account WHERE email = ?", [
             email,
         ]);
@@ -33,65 +36,75 @@ const registerNewAccount = async (req, res) => {
             return res.status(400).json({ message: "Email is already registered" });
         }
 
-        // Mulai transaksi
         const connection = await pool.getConnection();
         await connection.beginTransaction();
 
         try {
-            // Hash password dan insert ke akun
             const hashedPassword = await bcrypt.hash(password, 10);
             const [accountResult] = await connection.query(
-                "INSERT INTO account (email, password,created_by) VALUES (?, ?,?)",
+                "INSERT INTO account (email, password, created_by) VALUES (?, ?, ?)",
                 [email, hashedPassword, created_by]
             );
 
-            // Dapatkan ID akun yang baru saja dibuat
             const accountId = accountResult.insertId;
             const tableInsert = role;
 
-            if (tableInsert === "admin") {
+            if (tableInsert === "admin" || tableInsert === "owner") {
                 await connection.query(
-                    `INSERT INTO admin (name, phone, account_id) VALUES (?, ?, ?)`,
+                    `INSERT INTO ${tableInsert} (name, phone, account_id) VALUES (?, ?, ?)`,
                     [name, phone, accountId]
                 );
-            } else {
-                if (!req.user.role === "admin" && !req.user.isAdmin) {
-                    await connection.query(
-                        `INSERT INTO ${tableInsert} (name, phone, account_id, owner_id) VALUES (?, ?,  ?, ?)`,
-                        [name, phone, accountId, req.user.id]
-                    );
-                } else {
-                    if (!req.body.owner_id) {
-                        return res.status(400).json({ message: "owner_id is required" });
-                    }
-                    const [owner] = await pool.query(
-                        "SELECT account_id FROM owner WHERE account_id = ?",
-                        [req.body.owner_id]
-                    );
-                    if (owner.length === 0) {
-                        return res.status(404).json({ message: "owner_id not found" });
-                    }
-                    owner_id = req.body.owner_id;
-                    await connection.query(
-                        `INSERT INTO ${tableInsert} (name, phone, account_id, owner_id) VALUES (?, ?,  ?, ?)`,
-                        [name, phone, accountId, owner_id]
-                    );
-                }
+                await connection.commit();
+                connection.release();
+                return res
+                    .status(201)
+                    .json({ message: "Account successfully registered", email, name, phone, role });
             }
 
-            // Commit transaksi
+            if (!req.body.shop_id) {
+                connection.release();
+                return res.status(400).json({ message: "shop_id is required" });
+            }
+
+            shop_id = req.body.shop_id;
+
+            if (req.user.role === "owner") {
+                const [shop] = await connection.query(
+                    "SELECT * FROM shop WHERE id = ? AND owner_id = ?",
+                    [shop_id, req.user.id]
+                );
+                if (shop.length === 0) {
+                    connection.release();
+                    return res.status(404).json({ message: "Shop not found" });
+                }
+                await connection.query(
+                    `INSERT INTO employee (name, phone, account_id, owner_id, shop_id) VALUES (?, ?, ?, ?, ?)`,
+                    [name, phone, accountId, req.user.id, shop_id]
+                );
+            } else if (req.user.role === "admin" || req.user.admin) {
+                const [shop] = await connection.query("SELECT * FROM shop WHERE id = ?", [shop_id]);
+                if (shop.length === 0) {
+                    connection.release();
+                    return res.status(404).json({ message: "Shop not found" });
+                }
+                owner_id = shop[0].owner_id;
+                await connection.query(
+                    `INSERT INTO employee (name, phone, account_id, owner_id, shop_id) VALUES (?, ?, ?, ?, ?)`,
+                    [name, phone, accountId, owner_id, shop_id]
+                );
+            }
+
             await connection.commit();
             connection.release();
-
             res.status(201).json({
-                message: "Employee successfully registered",
+                message: "Account successfully registered",
                 email,
                 name,
                 phone,
                 role,
+                shop_id,
             });
         } catch (err) {
-            // Rollback jika ada error dalam transaksi
             await connection.rollback();
             connection.release();
             throw err;
