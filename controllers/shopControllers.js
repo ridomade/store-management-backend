@@ -66,35 +66,29 @@ const createShop = async (req, res) => {
     const { shop_name } = req.body;
     const accountId = req.user.id;
     let owner_id;
+    const role = req.user.role;
+    let created_by = 0; // default value as admin
     try {
+        if (role === "employee") {
+            return res.status(403).json({
+                message: "Unauthorized: Only owners or admins can access this method",
+            });
+        }
         if (!shop_name) {
             return res.status(400).json({ message: "shop_name is required" });
         }
-
-        const [rows] = await pool.query(
-            `SELECT 
-                CASE 
-                    WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
-                    WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
-                    WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
-                    ELSE NULL
-                END AS role;`,
-            [accountId, accountId, accountId]
-        );
-
-        if (!rows[0].role) {
-            return res.status(403).json({ message: "Account not Found" });
-        }
-        if (rows[0].role === "owner") {
+        if (role === "owner") {
             const [owner] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
                 accountId,
             ]);
             owner_id = owner[0].id; // kalo bukan admin, owner_id diisi dengan id owner yang login
-        } else if (rows[0].role === "admin") {
+            created_by = accountId;
+        }
+        if (role === "admin" || req.user.admin) {
             if (!req.body.owner_id) {
                 return res.status(400).json({ message: "owner_id is required" });
             }
-            const [owner] = await pool.query("SELECT account_id FROM owner WHERE account_id = ?", [
+            const [owner] = await pool.query("SELECT account_id FROM owner WHERE id = ?", [
                 req.body.owner_id,
             ]);
             if (owner.length === 0) {
@@ -102,12 +96,7 @@ const createShop = async (req, res) => {
             }
             owner_id = req.body.owner_id;
         }
-        if (rows[0].role === "employee") {
-            return res
-                .status(403)
-                .json({ message: "Unauthorized: Only owners or admins can create shops" });
-        }
-        const created_by = accountId;
+
         const [shop] = await pool.query(
             "INSERT INTO shop (shop_name, created_by, owner_id) VALUES (?, ?, ?)",
             [shop_name, created_by, owner_id]

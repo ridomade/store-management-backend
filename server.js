@@ -53,7 +53,6 @@ const initializeDatabase = async () => {
                 created_by INT NOT NULL,
                 owner_id INT NOT NULL,
                 CONSTRAINT fk_shop_owner_id FOREIGN KEY (owner_id) REFERENCES owner(id) ON DELETE CASCADE,
-                CONSTRAINT fk_shop_account_id FOREIGN KEY (created_by) REFERENCES account(id) ON DELETE CASCADE,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )

@@ -69,7 +69,6 @@ const registerNewAccount = async (req, res) => {
 
             shop_id = req.body.shop_id;
 
-            console.log("user role", req.user.role);
             if (req.user.role === "owner") {
                 const [shop] = await connection.query(
                     "SELECT * FROM shop WHERE id = ? AND owner_id = ?",
