@@ -45,7 +45,6 @@ beforeAll(async () => {
     ownerToken = jwt.sign({ id: ownerId, role: "owner" }, process.env.PRIVATE_KEY, {
         expiresIn: "1h",
     });
-
     //insert shop baru
     const [shopResult] = await pool.query(
         "INSERT INTO shop (shop_name, created_by, owner_id) VALUES (?, ?, ?)",
@@ -78,7 +77,7 @@ afterAll(async () => {
     server.close(); // Matikan server setelah pengujian selesai
 });
 
-it("❌ it should reject to regist account type without token ", async () => {
+it("❌ it should reject to register account without token ", async () => {
     const response = await request(app).post("/api/account/register").send({
         email: "erroradmin@example.com",
         password: "securepassword",
@@ -259,7 +258,6 @@ describe("Account Registration by owner", () => {
                     role: "admin",
                     shop_id: shopId,
                 });
-            console.log(response.body);
             expect(response.status).toBe(201);
             expect(response.body).toHaveProperty("role", "employee");
         });
@@ -275,7 +273,6 @@ describe("Account Registration by owner", () => {
                     role: "owner",
                     shop_id: shopId,
                 });
-            console.log(response.body);
             expect(response.status).toBe(201);
             expect(response.body).toHaveProperty("role", "employee");
         });
@@ -291,28 +288,198 @@ describe("Account Registration by owner", () => {
                     role: "employe",
                     shop_id: shopId,
                 });
-            console.log(response.body);
             expect(response.status).toBe(201);
             expect(response.body).toHaveProperty("role", "employee");
         });
     });
 });
 
-it("❌ it should reject employee to regist an account ", async () => {
-    const response = await request(app)
-        .post("/api/account/register")
-        .set("Authorization", `Bearer ${employeeToken}`)
-        .send({
-            email: "employeeAddingNewAccount@example.com",
-            password: "securepassword",
-            name: "test user admin",
-            phone: "0001112222",
-            role: "admin",
+describe("Account Registration by employee", () => {
+    it("❌ it should reject employee to regist an account ", async () => {
+        const response = await request(app)
+            .post("/api/account/register")
+            .set("Authorization", `Bearer ${employeeToken}`)
+            .send({
+                email: "employeeAddingNewAccount@example.com",
+                password: "securepassword",
+                name: "test user admin",
+                phone: "0001112222",
+                role: "admin",
+            });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty(
+            "message",
+            "Unauthorized: Only owners or admin can register new accounts"
+        );
+    });
+});
+
+describe("Account Login", () => {
+    it("✅ Should successfully login as owner", async () => {
+        const response = await request(app).post("/api/account/login").send({
+            email: "owner@example.com",
+            password: "ownerpassword",
+        });
+        ownerToken = response.body.token;
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty("message", "Login successful");
+        expect(response.body).toHaveProperty("token");
+        expect(response.body.data).toHaveProperty("role", "owner");
+    });
+
+    it("✅ Should successfully login as employee", async () => {
+        const response = await request(app).post("/api/account/login").send({
+            email: "employee@example.com",
+            password: "employeepassword",
         });
 
-    expect(response.status).toBe(403);
-    expect(response.body).toHaveProperty(
-        "message",
-        "Unauthorized: Only owners or admin can register new accounts"
-    );
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty("message", "Login successful");
+        expect(response.body).toHaveProperty("token");
+        expect(response.body.data).toHaveProperty("role", "employee");
+    });
+
+    it("❌ Should fail login with incorrect password", async () => {
+        const response = await request(app).post("/api/account/login").send({
+            email: "owner@example.com",
+            password: "wrongpassword",
+        });
+
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty("message", "Invalid email or password");
+    });
+
+    it("❌ Should fail login with unregistered email", async () => {
+        const response = await request(app).post("/api/account/login").send({
+            email: "notfound@example.com",
+            password: "password",
+        });
+
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty("message", "User not found");
+    });
+
+    it("❌ Should fail login without email or password", async () => {
+        const response = await request(app).post("/api/account/login").send({});
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty("message", "Email and password are required");
+    });
+});
+
+describe("Account Validation", () => {
+    it("✅ Should successfully validate token", async () => {
+        const response = await request(app)
+            .get("/api/account/validate")
+            .set("Authorization", `Bearer ${ownerToken}`);
+
+        expect(response.status).toBe(200);
+    });
+
+    it("❌ Should fail validation with invalid token", async () => {
+        const response = await request(app)
+            .get("/api/account/validate")
+            .set("Authorization", `Bearer invalidtoken`);
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty("message", "Invalid or expired token");
+    });
+
+    it("❌ Should fail validation without token", async () => {
+        const response = await request(app).get("/api/account/validate");
+
+        expect(response.status).toBe(401);
+        expect(response.body).toHaveProperty("message", "Not authorized, no token provided");
+    });
+});
+
+describe("Get Account data by ID", () => {
+    it("✅ Should successfully get account data by ID", async () => {
+        const response = await request(app)
+            .get(`/api/account/${ownerAccountId}`)
+            .set("Authorization", `Bearer ${ownerToken}`); // why its invalid ownerToken
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty("id", ownerId);
+    });
+
+    it("❌ Should fail get account data with invalid token", async () => {
+        const response = await request(app)
+            .get(`/api/account/${ownerId}`)
+            .set("Authorization", `Bearer invalidtoken`);
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty("message", "Invalid or expired token");
+    });
+
+    it("❌ Should fail get account data with unauthorized account", async () => {
+        const response = await request(app)
+            .get(`/api/account/${employeeId}`)
+            .set("Authorization", `Bearer ${ownerToken}`);
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty("message", "Unauthorized access");
+    });
+
+    it("❌ Should fail get account data with non-existent ID", async () => {
+        const response = await request(app).get("/api/account/9999").set("adminAuth", adminToken);
+
+        expect(response.status).toBe(404);
+        expect(response.body).toHaveProperty("message", "Account not found");
+    });
+});
+
+describe("Account Update", () => {
+    it("✅ Should successfully update owner account data", async () => {
+        const response = await request(app)
+            .put(`/api/account/${ownerAccountId}`)
+            .set("Authorization", `Bearer ${ownerToken}`)
+            .send({
+                name: "Updated Owner",
+                phone: "1234567890",
+            });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toHaveProperty("message", "Account updated successfully");
+    });
+
+    it("❌ Should fail update with invalid token", async () => {
+        const response = await request(app)
+            .put(`/api/account/${ownerId}`)
+            .set("Authorization", `Bearer invalidtoken`)
+            .send({
+                name: "Updated Owner",
+                phone: "1234567890",
+            });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty("message", "Invalid or expired token");
+    });
+
+    it("❌ Should fail update with unauthorized account", async () => {
+        const response = await request(app)
+            .put(`/api/account/${employeeId}`)
+            .set("Authorization", `Bearer ${ownerToken}`)
+            .send({
+                name: "Updated Employee",
+                phone: "1234567890",
+            });
+
+        expect(response.status).toBe(403);
+        expect(response.body).toHaveProperty("message", "Unauthorized: Access denied");
+    });
+
+    it("❌ Should fail update with missing name field", async () => {
+        const response = await request(app)
+            .put(`/api/account/${ownerId}`)
+            .set("Authorization", `Bearer ${ownerToken}`)
+            .send({
+                phone: "1234567890",
+            });
+
+        expect(response.status).toBe(400);
+        expect(response.body).toHaveProperty("message", "name is required");
+    });
 });
