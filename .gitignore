@@ -1,3 +1,5 @@
 /node_modules
 .env
 note.txt
+./uploads
+./routes/imageRoutes.js

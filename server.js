@@ -22,6 +22,11 @@ const port = process.env.PORT || 5000;
 app.use("/api/shop", require("./routes/shopRoutes"));
 app.use("/api/account", require("./routes/accountRoutes"));
 
+// app.use(express.urlencoded({ extended: true }));
+
+// // Menyajikan gambar secara statis
+// app.use("/api/upload", express.static("uploads"), require("./routes/imageRoutes"));
+
 const initializeDatabase = async () => {
     try {
         console.log("🔄 Initializing database...");
