@@ -6,13 +6,13 @@ const router = express.Router();
 const {
     updateShopData,
     getShopDataById,
-    getAllOwnerShops,
+    getAllShopData,
     createShop,
     // deleteShopAccount,
 } = require("../controllers/shopControllers");
 const { Route } = require("express");
 
-router.get("/", tokenHandler, getAllOwnerShops);
+router.get("/", tokenHandler, getAllShopData);
 router.get("/:id", tokenHandler, getShopDataById);
 router.put("/:id", tokenHandler, updateShopData);
 router.post("/create", tokenHandler, createShop);

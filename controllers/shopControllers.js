@@ -2,30 +2,7 @@ const pool = require("../config/dbConnection");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-const getAllOwnerShops = async (req, res) => {
-    const id = req.user.id;
-    const accountRole = req.user.role;
-    try {
-        // kalo admin yang login kasi semua
-        if (accountRole === "admin") {
-            const [shops] = await pool.query("SELECT * FROM shop");
-            res.status(200).json(shops);
-        }
-
-        if (accountRole === "employee") {
-            return res
-                .status(403)
-                .json({ message: "Unauthorized: Only owners or admin can access this data" });
-        }
-        const [shops] = await pool.query("SELECT * FROM shop WHERE account_id = ?", [id]);
-        res.status(200).json(shops);
-    } catch (error) {
-        console.error("Error getting shops:", error);
-        res.status(500).json({ error: "Failed to get shops" });
-    }
-};
-const getShopDataById = async (req, res) => {
-    const { id } = req.params;
+const getAllShopData = async (req, res) => {
     const { role, id: userId } = req.user;
 
     try {
@@ -39,20 +16,57 @@ const getShopDataById = async (req, res) => {
         let query;
         let params;
 
-        // admin bisa ambil mana saja
-        if (role === "admin") {
-            query = "SELECT * FROM shop WHERE id = ?";
-            params = [id];
+        // admin bisa ambil semua toko
+        if (role === "admin" || req.user.admin) {
+            query = "SELECT * FROM shop";
+            params = [];
         } else {
-            // owner hanya bisa ambil miliknya sediri
-            query = "SELECT * FROM shop WHERE id = ? AND account_id = ?";
-            params = [id, userId];
+            const [[owner]] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
+                req.user.id,
+            ]);
+
+            query = "SELECT * FROM shop WHERE owner_id = ?";
+            params = [owner.id];
         }
 
-        const [[shop]] = await pool.query(query, params);
+        const [shops] = await pool.query(query, params);
+
+        res.status(200).json(shops);
+    } catch (error) {
+        console.error("Error getting shop data:", error);
+        res.status(500).json({ error: "Failed to get shop data" });
+    }
+};
+
+const getShopDataById = async (req, res) => {
+    const { id } = req.params;
+
+    try {
+        // Hanya owner dan admin yang boleh mengakses data toko
+        if (req.user.role === "employee") {
+            return res.status(403).json({
+                message: "Unauthorized: Only owners or admins can access this data",
+            });
+        }
+
+        // Cek apakah toko yang dicari ada di database
+        const [[shop]] = await pool.query("SELECT * FROM shop WHERE id = ?", [id]);
 
         if (!shop) {
-            return res.status(404).json({ message: "Shop not found or access denied" });
+            return res.status(404).json({ message: "Shop not found" });
+        }
+
+        if (req.user.role === "admin" || req.user.admin) {
+            return res.status(200).json(shop);
+        }
+        const [ownerId] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
+            req.user.id,
+        ]);
+
+        if (shop.owner_id !== ownerId[0].id) {
+            return res.status(403).json({
+                message: "Unauthorized: You can only access your own shop",
+            });
         }
 
         res.status(200).json(shop);
@@ -74,10 +88,11 @@ const createShop = async (req, res) => {
                 message: "Unauthorized: Only owners or admins can access this method",
             });
         }
-        if (!shop_name) {
-            return res.status(400).json({ message: "shop_name is required" });
-        }
+
         if (role === "owner") {
+            if (!shop_name) {
+                return res.status(400).json({ message: "shop_name is required" });
+            }
             const [owner] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
                 accountId,
             ]);
@@ -85,8 +100,8 @@ const createShop = async (req, res) => {
             created_by = accountId;
         }
         if (role === "admin" || req.user.admin) {
-            if (!req.body.owner_id) {
-                return res.status(400).json({ message: "owner_id is required" });
+            if (!req.body.owner_id || !shop_name) {
+                return res.status(400).json({ message: "shop_name and owner_id is required" });
             }
             const [owner] = await pool.query("SELECT account_id FROM owner WHERE id = ?", [
                 req.body.owner_id,
@@ -113,6 +128,8 @@ const createShop = async (req, res) => {
         res.status(500).json({ error: "Failed to create shop" });
     }
 };
+
+// Update base on role
 const updateShopData = async (req, res) => {
     const { id } = req.params;
     const { shop_name } = req.body;
@@ -171,6 +188,6 @@ const updateShopData = async (req, res) => {
 module.exports = {
     getShopDataById,
     updateShopData,
-    getAllOwnerShops,
+    getAllShopData,
     createShop,
 };

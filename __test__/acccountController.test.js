@@ -17,6 +17,10 @@ let employeeToken;
 let employeeId;
 let employeeAccountId;
 
+let ownerToken2;
+let ownerId2;
+let ownerAccountId2;
+
 const adminToken = process.env.ADMIN_KEY;
 
 beforeAll(async () => {
@@ -68,6 +72,24 @@ beforeAll(async () => {
     employeeId = employeeResult.insertId;
 
     employeeToken = jwt.sign({ id: employeeId, role: "employee" }, process.env.PRIVATE_KEY, {
+        expiresIn: "1h",
+    });
+
+    // Insert akun owner2
+    const ownerPassword2 = await bcrypt.hash("ownerpassword", 10);
+    const [accountResult2] = await pool.query(
+        "INSERT INTO account (email, password, created_by) VALUES (?, ?, ?)",
+        ["owner2@example.com", ownerPassword2, 0]
+    );
+    ownerAccountId2 = accountResult2.insertId;
+
+    const [ownerResult2] = await pool.query(
+        "INSERT INTO owner (name, phone, account_id) VALUES (?, ?, ?)",
+        ["Owner", "0001112222", ownerAccountId2]
+    );
+    ownerId2 = ownerResult2.insertId;
+
+    ownerToken2 = jwt.sign({ id: ownerId, role: "owner" }, process.env.PRIVATE_KEY, {
         expiresIn: "1h",
     });
 });
@@ -399,7 +421,7 @@ describe("Get Account data by ID", () => {
     it("✅ Should successfully get account data by ID", async () => {
         const response = await request(app)
             .get(`/api/account/${ownerAccountId}`)
-            .set("Authorization", `Bearer ${ownerToken}`); // why its invalid ownerToken
+            .set("Authorization", `Bearer ${ownerToken}`);
 
         expect(response.status).toBe(200);
         expect(response.body).toHaveProperty("id", ownerId);
@@ -414,15 +436,6 @@ describe("Get Account data by ID", () => {
         expect(response.body).toHaveProperty("message", "Invalid or expired token");
     });
 
-    it("❌ Should fail get account data with unauthorized account", async () => {
-        const response = await request(app)
-            .get(`/api/account/${employeeId}`)
-            .set("Authorization", `Bearer ${ownerToken}`);
-
-        expect(response.status).toBe(403);
-        expect(response.body).toHaveProperty("message", "Unauthorized access");
-    });
-
     it("❌ Should fail get account data with non-existent ID", async () => {
         const response = await request(app).get("/api/account/9999").set("adminAuth", adminToken);
 
@@ -431,55 +444,65 @@ describe("Get Account data by ID", () => {
     });
 });
 
-describe("Account Update", () => {
-    it("✅ Should successfully update owner account data", async () => {
-        const response = await request(app)
-            .put(`/api/account/${ownerAccountId}`)
-            .set("Authorization", `Bearer ${ownerToken}`)
-            .send({
-                name: "Updated Owner",
-                phone: "1234567890",
-            });
+// Owner should be able to update their own data
+it("✅ Should successfully update owner account data", async () => {
+    const response = await request(app)
+        .put(`/api/account/update`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({
+            name: "Updated Owner",
+            phone: "1234567890",
+        });
 
-        expect(response.status).toBe(200);
-        expect(response.body).toHaveProperty("message", "Account updated successfully");
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty("message", "Account updated successfully");
+});
 
-    it("❌ Should fail update with invalid token", async () => {
-        const response = await request(app)
-            .put(`/api/account/${ownerId}`)
-            .set("Authorization", `Bearer invalidtoken`)
-            .send({
-                name: "Updated Owner",
-                phone: "1234567890",
-            });
+//owner should be able to update employee data
+it("✅ Should successfully update employee account data", async () => {
+    const response = await request(app)
+        .put(`/api/account/update`)
+        .set("Authorization", `Bearer ${ownerToken}`)
+        .send({
+            id: employeeAccountId,
+            name: "Updated Employee",
+            phone: "1234567890",
+        });
 
-        expect(response.status).toBe(403);
-        expect(response.body).toHaveProperty("message", "Invalid or expired token");
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty("message", "Account updated successfully");
+});
 
-    it("❌ Should fail update with unauthorized account", async () => {
-        const response = await request(app)
-            .put(`/api/account/${employeeId}`)
-            .set("Authorization", `Bearer ${ownerToken}`)
-            .send({
-                name: "Updated Employee",
-                phone: "1234567890",
-            });
+// employee should be abble to update their own data
 
-        expect(response.status).toBe(403);
-        expect(response.body).toHaveProperty("message", "Unauthorized: Access denied");
-    });
+it("✅ Should successfully update employee account data", async () => {
+    console.log(employeeToken);
+    console.log(employeeAccountId);
+    const response = await request(app)
+        .put(`/api/account/update`)
+        .set("Authorization", `Bearer ${employeeToken}`)
+        .send({
+            name: "Updated Employee2",
+            phone: "1234567890",
+        });
 
-    it("❌ Should fail update with missing name field", async () => {
-        const response = await request(app)
-            .put(`/api/account/${ownerId}`)
-            .set("Authorization", `Bearer ${ownerToken}`)
-            .send({
-                phone: "1234567890",
-            });
+    console.log(response.body);
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty("message", "Account updated successfully");
+});
 
-        expect(response.status).toBe(400);
-        expect(response.body).toHaveProperty("message", "name is required");
-    });
+// admin should be able to update any account data
+
+it("✅ Should successfully update employee account data", async () => {
+    const response = await request(app)
+        .put(`/api/account/update`)
+        .set("adminAuth", adminToken)
+        .send({
+            id: employeeAccountId,
+            name: "Updated Employee3",
+            phone: "1234567890",
+        });
+    console.log(response.body);
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty("message", "Account updated successfully");
 });

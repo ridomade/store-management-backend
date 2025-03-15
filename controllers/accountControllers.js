@@ -137,6 +137,7 @@ const loginAccount = async (req, res) => {
 
         // Verify the password
         const isMatch = await bcrypt.compare(password, account.password);
+
         if (!isMatch) {
             return res.status(401).json({ message: "Invalid email or password" });
         }
@@ -180,38 +181,121 @@ const loginAccount = async (req, res) => {
     }
 };
 
+const getOwnersEmployee = async (req, res) => {
+    try {
+        if (req.user.admin || req.user.role === "admin") {
+            if (!req.body.account_id) {
+                return res.status(400).json({ message: "account_id is required" });
+            }
+            req.user.id = req.body.account_id;
+        }
+        if (req.user.role !== "owner" && !req.user.admin && !req.user.role === "admin") {
+            return res.status(403).json({ message: "Unauthorized access" });
+        }
+        const [owner] = await pool.query("SELECT * FROM owner WHERE account_id = ?", [req.user.id]);
+        if (owner.length === 0) {
+            return res.status(404).json({ message: "Owner not found" });
+        }
+
+        const [employees] = await pool.query("SELECT * FROM employee WHERE owner_id = ?", [
+            owner[0].id,
+        ]);
+
+        if (employees.length === 0) {
+            return res.status(200).json({ message: "No employees found", employees: [] });
+        }
+
+        const employeeIds = employees.map((emp) => emp.account_id);
+
+        const [employeeAccounts] = await pool.query(`SELECT email FROM account WHERE id IN (?)`, [
+            employeeIds,
+        ]);
+
+        const employeesWithAccounts = employees.map((emp) => {
+            const account = employeeAccounts.find((acc) => acc.account_id === emp.account_id);
+            return { ...emp, account };
+        });
+
+        res.status(200).json(employeesWithAccounts);
+    } catch (error) {
+        console.error("Error getting employees:", error);
+        res.status(500).json({ error: "Failed to get employees" });
+    }
+};
+
 const getDataById = async (req, res) => {
     const { id } = req.params;
+
     try {
-        if (id != req.user.id && req.user.role !== "admin" && !req.user.admin) {
+        const [account] = await pool.query("SELECT * FROM account WHERE id = ?", [id]);
+        if (account.length === 0) {
+            return res.status(404).json({ message: "Account not found" });
+        }
+
+        const { password, ...accountWithoutPassword } = account[0];
+
+        // Fungsi untuk mengambil data tambahan dari tabel sesuai peran
+        const getAdditionalData = async (role, accountId) => {
+            if (role === "owner") {
+                const [ownerData] = await pool.query("SELECT * FROM owner WHERE account_id = ?", [
+                    accountId,
+                ]);
+                return ownerData[0] || {};
+            } else if (role === "employee") {
+                const [employeeData] = await pool.query(
+                    "SELECT * FROM employee WHERE account_id = ?",
+                    [accountId]
+                );
+                return employeeData[0] || {};
+            } else if (role === "admin") {
+                const [adminData] = await pool.query("SELECT * FROM admin WHERE account_id = ?", [
+                    accountId,
+                ]);
+                return adminData[0] || {};
+            }
+            return {};
+        };
+
+        // Admin dapat mengakses semua data
+        if (req.user.role === "admin") {
+            const additionalData = await getAdditionalData("admin", id);
+            return res.json({ ...accountWithoutPassword, ...additionalData });
+        }
+
+        // Karyawan hanya dapat mengakses datanya sendiri
+        if (req.user.role === "employee" && id != req.user.id) {
             return res.status(403).json({ message: "Unauthorized access" });
         }
 
-        const [accountData] = await pool.query("SELECT * FROM account WHERE id = ?", [id]);
+        if (req.user.role === "owner") {
+            // Owner bisa akses datanya sendiri
+            if (id == req.user.id) {
+                const additionalData = await getAdditionalData("owner", id);
+                return res.json({ ...accountWithoutPassword, ...additionalData });
+            }
 
-        if (accountData.length === 0) {
-            return res.status(404).json({ message: "Account not found" });
+            // Ambil id owner dari account_id
+            const [owner] = await pool.query("SELECT id FROM owner WHERE account_id = ?", [
+                req.user.id,
+            ]);
+
+            // Cek apakah akun yang diminta adalah karyawan dari owner
+            const [employee] = await pool.query(
+                "SELECT * FROM employee WHERE owner_id = ? AND account_id = ?",
+                [owner[0]?.id, id]
+            );
+
+            if (employee.length === 0) {
+                return res.status(403).json({ message: "Unauthorized access" });
+            }
+
+            const additionalData = await getAdditionalData("employee", id);
+            return res.json({ ...accountWithoutPassword, ...additionalData });
         }
-        const [role] = await pool.query(
-            `SELECT
-            CASE
-                WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
-                WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
-                WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
-                ELSE NULL
-            END AS role;`,
-            [id, id, id]
-        );
 
-        const [accountDataRole] = await pool.query(
-            `SELECT * FROM ${role[0].role} WHERE account_id = ?`,
-            [id]
-        );
-
-        const account = [];
-        const { password, ...accountWithoutPassword } = accountData[0];
-        account.push({ ...accountWithoutPassword, ...accountDataRole[0] });
-        res.json(account[0]);
+        // Default: Kembalikan data untuk karyawan
+        const additionalData = await getAdditionalData("employee", id);
+        return res.json({ ...accountWithoutPassword, ...additionalData });
     } catch (error) {
         console.error("Error getting account data:", error);
         res.status(500).json({ error: "Failed to get account data" });
@@ -219,45 +303,66 @@ const getDataById = async (req, res) => {
 };
 
 const updateAccountData = async (req, res) => {
-    const { id } = req.params;
-    const { email, password, name, phone } = req.body;
+    const { employee_id, account_id, email, password, name, phone } = req.body;
+    const requester_id = req.user.id;
     let connection;
 
     try {
-        if (id != req.user.id && req.user.role !== "admin" && !req.user.admin) {
-            return res.status(403).json({ message: "Unauthorized access" });
+        connection = await pool.getConnection();
+        await connection.beginTransaction();
+
+        const isOwner = req.user.role === "owner";
+        const isAdmin = req.user.role === "admin";
+
+        // Validasi hak akses
+        let target_id = requester_id;
+        let target_table = req.user.role;
+
+        if (isOwner && employee_id) {
+            // Validasi apakah employee milik owner
+            const [[owner]] = await connection.query("SELECT id FROM owner WHERE account_id = ?", [
+                requester_id,
+            ]);
+
+            const [employees] = await connection.query(
+                "SELECT id FROM employee WHERE owner_id = ?",
+                [owner.id]
+            );
+
+            if (!employees.some((item) => item.id === employee_id)) {
+                await connection.rollback();
+                return res.status(404).json({ message: "Employee not found" });
+            }
+
+            target_id = employee_id;
+            target_table = "employee";
+        } else if (isAdmin && account_id) {
+            // Admin dapat memperbarui semua akun
+            target_id = account_id;
+
+            // Tentukan tabel berdasarkan akun
+            const [[role]] = await connection.query(
+                `SELECT 
+                    CASE 
+                        WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
+                        WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
+                        WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
+                        ELSE NULL 
+                    END AS role;`,
+                [account_id, account_id, account_id]
+            );
+
+            if (!role.role) {
+                await connection.rollback();
+                return res.status(400).json({ message: "User role not found" });
+            }
+
+            target_table = role.role;
+        } else if (isOwner && !employee_id) {
+            target_table = "owner";
         }
 
-        connection = await pool.getConnection(); // Dapatkan koneksi dari pool
-        await connection.beginTransaction(); // Mulai transaksi
-
-        const [account] = await connection.query("SELECT * FROM account WHERE id = ?", [id]);
-
-        if (account.length === 0) {
-            await connection.rollback();
-            return res.status(404).json({ message: "Account not found" });
-        }
-
-        // Ambil peran pengguna berdasarkan ID akun
-        const [roleResult] = await connection.query(
-            `SELECT 
-                CASE 
-                    WHEN EXISTS (SELECT 1 FROM employee WHERE account_id = ?) THEN 'employee'
-                    WHEN EXISTS (SELECT 1 FROM admin WHERE account_id = ?) THEN 'admin'
-                    WHEN EXISTS (SELECT 1 FROM owner WHERE account_id = ?) THEN 'owner'
-                    ELSE NULL 
-                END AS role;`,
-            [id, id, id]
-        );
-
-        const userRole = roleResult[0]?.role; // Periksa apakah role ditemukan
-
-        if (!userRole) {
-            await connection.rollback();
-            return res.status(400).json({ message: "User role not found" });
-        }
-
-        // Kumpulkan data yang akan diperbarui
+        // Siapkan query update
         const updates = [];
         const values = [];
 
@@ -277,6 +382,7 @@ const updateAccountData = async (req, res) => {
             updates.push("password = ?");
             values.push(await bcrypt.hash(password, 10));
         }
+
         if (updates.length === 0) {
             await connection.rollback();
             return res.status(400).json({
@@ -285,56 +391,93 @@ const updateAccountData = async (req, res) => {
             });
         }
 
-        // Perbarui tabel `account` jika ada perubahan email atau password
-        if (email || password) {
-            const accountUpdates = updates.filter(
-                (field) => field.startsWith("email") || field.startsWith("password")
+        if (target_table === "employee") {
+            const [[employeeAccountId]] = await connection.query(
+                "SELECT account_id FROM employee WHERE id = ?",
+                [target_id]
             );
-            if (accountUpdates.length > 0) {
-                await connection.query(
-                    `UPDATE account SET ${accountUpdates.join(", ")} WHERE id = ?`,
-                    [...values, id]
-                );
-            }
+            target_id = employeeAccountId.account_id;
         }
 
-        // Perbarui tabel yang sesuai dengan role pengguna (admin/employee/owner)
-        if (name || phone) {
-            const roleUpdates = updates.filter(
-                (field) => field.startsWith("name") || field.startsWith("phone")
-            );
-            if (roleUpdates.length > 0) {
-                await connection.query(
-                    `UPDATE ${userRole} SET ${roleUpdates.join(", ")} WHERE account_id = ?`,
-                    [...values, id]
-                );
-            }
-        }
+        // if (target_table === "owner") {
+        //     const [[ownerAccountId]] = await connection.query(
+        //         "SELECT account_id FROM owner WHERE id = ?",
+        //         [target_id]
+        //     );
+        //     target_id = ownerAccountId.account_id;
+        // }
 
-        await connection.commit(); // Commit transaksi jika semua berhasil
+        // if (target_table === "admin") {
+        //     const [[adminAccountId]] = await connection.query(
+        //         "SELECT account_id FROM admin WHERE id = ?",
+        //         [target_id]
+        //     );
+        //     target_id = adminAccountId.account_id;
+        // }
 
-        const [updatedAccount] = await connection.query(
-            `SELECT * FROM account JOIN ${userRole} ON account.id = ${userRole}.account_id WHERE account.id = ?`,
-            [id]
+        // Perbarui tabel account jika ada email atau password
+
+        console.log("target_ID", target_id);
+        const accountUpdates = updates.filter((field) =>
+            ["email = ?", "password = ?"].includes(field)
         );
+
+        const [[existingUser]] = await pool.query("SELECT id FROM account WHERE email = ?", [
+            email,
+        ]);
+        if (existingUser) {
+            return res.status(400).json({ message: "Email is already registered" });
+        }
+        if (accountUpdates.length > 0) {
+            await connection.query(`UPDATE account SET ${accountUpdates.join(", ")} WHERE id = ?`, [
+                ...values,
+                target_id,
+            ]);
+        }
+
+        // Perbarui tabel sesuai role jika ada name atau phone
+        const roleUpdates = updates.filter((field) => ["name = ?", "phone = ?"].includes(field));
+
+        if (roleUpdates.length > 0) {
+            await connection.query(
+                `UPDATE ${target_table} SET ${roleUpdates.join(", ")} WHERE account_id = ?`,
+                [...values, target_id]
+            );
+        }
+
+        await connection.commit();
+
+        // Ambil data terbaru
+        const [updatedAccount] = await connection.query(
+            `SELECT * FROM account 
+             JOIN ${target_table} ON account.id = ${target_table}.account_id 
+             WHERE account.id = ?`,
+            [target_id]
+        );
+
         const { password: pass, ...accountWithoutPassword } = updatedAccount[0];
-        res.json({ message: "Account updated successfully", account: accountWithoutPassword });
+        res.json({
+            message: "Account updated successfully",
+            account: accountWithoutPassword,
+        });
     } catch (error) {
-        if (connection) await connection.rollback(); // Rollback jika ada error
+        if (connection) await connection.rollback();
         console.error("Error updating account:", error);
         res.status(500).json({ error: "Failed to update account" });
     } finally {
-        if (connection) connection.release(); // Pastikan koneksi dilepaskan
+        if (connection) connection.release();
     }
 };
 
 const validateToken = async (req, res) => {
-    res.json(req.user);
+    res.json({ message: "Token is valid" });
 };
+
 module.exports = {
     registerNewAccount,
     loginAccount,
     validateToken,
     updateAccountData,
     getDataById,
+    getOwnersEmployee,
 };
