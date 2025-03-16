@@ -391,36 +391,10 @@ const updateAccountData = async (req, res) => {
             });
         }
 
-        if (target_table === "employee") {
-            const [[employeeAccountId]] = await connection.query(
-                "SELECT account_id FROM employee WHERE id = ?",
-                [target_id]
-            );
-            target_id = employeeAccountId.account_id;
-        }
-
-        // if (target_table === "owner") {
-        //     const [[ownerAccountId]] = await connection.query(
-        //         "SELECT account_id FROM owner WHERE id = ?",
-        //         [target_id]
-        //     );
-        //     target_id = ownerAccountId.account_id;
-        // }
-
-        // if (target_table === "admin") {
-        //     const [[adminAccountId]] = await connection.query(
-        //         "SELECT account_id FROM admin WHERE id = ?",
-        //         [target_id]
-        //     );
-        //     target_id = adminAccountId.account_id;
-        // }
-
-        // Perbarui tabel account jika ada email atau password
-
-        console.log("target_ID", target_id);
         const accountUpdates = updates.filter((field) =>
             ["email = ?", "password = ?"].includes(field)
         );
+        const accountUpdatesvalue = values.filter((field) => [email, password].includes(field));
 
         const [[existingUser]] = await pool.query("SELECT id FROM account WHERE email = ?", [
             email,
@@ -428,20 +402,22 @@ const updateAccountData = async (req, res) => {
         if (existingUser) {
             return res.status(400).json({ message: "Email is already registered" });
         }
+
         if (accountUpdates.length > 0) {
             await connection.query(`UPDATE account SET ${accountUpdates.join(", ")} WHERE id = ?`, [
-                ...values,
+                accountUpdatesvalue,
                 target_id,
             ]);
         }
 
         // Perbarui tabel sesuai role jika ada name atau phone
         const roleUpdates = updates.filter((field) => ["name = ?", "phone = ?"].includes(field));
+        const roleUpdatesvalue = values.filter((field) => [name, phone].includes(field));
 
         if (roleUpdates.length > 0) {
             await connection.query(
                 `UPDATE ${target_table} SET ${roleUpdates.join(", ")} WHERE account_id = ?`,
-                [...values, target_id]
+                [roleUpdatesvalue, target_id]
             );
         }
 
